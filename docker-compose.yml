@@ -1,0 +1,68 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: todos
+    volumes:
+      - /home/milu/data/samples/todo/db-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "15672:15672"
+      - "5672:5672"
+    networks:
+      - backend
+
+  projection-cache:
+    build: ./go-projection-cache
+    depends_on:
+      - rabbitmq
+    networks:
+      - backend
+    ports:
+      - "8081:8081"
+
+  backend:
+    build: ./backend
+    depends_on:
+      - rabbitmq
+      - postgres
+      - projection-cache
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: guest
+      RABBITMQ_PASS: guest
+      POSTGRES_CONN: Host=postgres;Username=postgres;Password=postgres;Database=todos
+      PROJECTION_CACHE_URL: http://projection-cache:8081
+    networks:
+      - backend
+
+  consumer:
+    build: ./go-consumer
+    depends_on:
+      - rabbitmq
+      - postgres
+      - projection-cache
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      POSTGRES_CONN: host=postgres user=postgres password=postgres dbname=todos sslmode=disable
+    networks:
+      - backend
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    networks:
+      - backend
+    ports:
+      - "3000:80"
+
+networks:
+  backend:
+    driver: bridge
