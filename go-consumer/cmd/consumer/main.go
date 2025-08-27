@@ -27,6 +27,10 @@ type Event struct {
 	CreatedAt time.Time       `json:"createdAt,omitempty"`
 }
 
+type ProjectionAction struct {
+	Act bool `json:"act"`
+}
+
 func main() {
 	amqpUrl := os.Getenv("RABBITMQ_URL")
 	pgConn := os.Getenv("POSTGRES_CONN")
@@ -130,11 +134,12 @@ func main() {
 				d.Nack(false, true)
 				continue
 			}
+			var action = ProjectionAction{Act: true}
 
-			body, _ := json.Marshal(ev)
+			body, _ := json.Marshal(action)
 
 			ch.Publish(
-				"", "todo-events", false, false,
+				"", "projection-events", false, false,
 				amqp.Publishing{
 					ContentType: "application/json",
 					Body:        body,

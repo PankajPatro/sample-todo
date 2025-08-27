@@ -18,7 +18,6 @@ type Todo struct {
 	ID        uuid.UUID `json:"id"`
 	Title     string    `json:"title"`
 	Completed bool      `json:"completed"`
-	CreatedAt time.Time `json:"created_at"`
 }
 
 var (
@@ -34,9 +33,9 @@ func main() {
 	}
 	defer db.Close()
 
-	// Hydrate cache by replaying events
-	if err := hydrateCache(db); err != nil {
-		log.Fatal("Cache hydration failed:", err)
+	// Create Projection by Replaying Events
+	if err := populateProjection(db); err != nil {
+		log.Fatal("Populate Projection failed:", err)
 	}
 
 	// Connect RabbitMQ
@@ -53,7 +52,7 @@ func main() {
 	defer ch.Close()
 
 	q, err := ch.QueueDeclare(
-		"todo-events", true, false, false, false, nil,
+		"projection-events", true, false, false, false, nil,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -67,29 +66,33 @@ func main() {
 	// Listen to events async
 	go func() {
 		for d := range msgs {
-			handleEvent(db, d.Body)
+			var msg struct {
+				Act bool `json:"act"`
+			}
+			if err := json.Unmarshal(d.Body, &msg); err != nil {
+				log.Println("Invalid projection action:", err)
+				continue
+			}
+			populateProjection(db) // Ensure Projection is up to date
 		}
 	}()
-
-	// HTTP Handlers
-	http.HandleFunc("/todos", getTodosHandler)
 
 	log.Println("Cache service running on :8081")
 	log.Fatal(http.ListenAndServe(":8081", nil))
 }
 
-func hydrateCache(db *sql.DB) error {
+func populateProjection(db *sql.DB) error {
 	// Find last applied event timestamp
-	var lastApplied time.Time
-	err := db.QueryRow(`SELECT COALESCE(MAX(last_event_created_at), 'epoch') FROM todos`).Scan(&lastApplied)
+	var lastModified time.Time
+	err := db.QueryRow(`SELECT COALESCE(MAX(last_modified), 'epoch') FROM todos`).Scan(&lastModified)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("Hydrating cache from events newer than %v\n", lastApplied)
+	log.Printf("Hydrating cache from events newer than %v\n", lastModified)
 
 	// Get all relevant events from persistence
-	rows, err := db.Query(`SELECT type, payload, created_at FROM events WHERE created_at > $1 ORDER BY created_at ASC`, lastApplied)
+	rows, err := db.Query(`SELECT type, payload, created_at FROM events WHERE created_at > $1 ORDER BY created_at ASC`, lastModified)
 	if err != nil {
 		return err
 	}
@@ -104,7 +107,7 @@ func hydrateCache(db *sql.DB) error {
 			return err
 		}
 
-		event := map[string]interface{}{
+		event := map[string]any{
 			"type":      eventType,
 			"payload":   payload,
 			"createdAt": createdAt,
@@ -118,7 +121,7 @@ func hydrateCache(db *sql.DB) error {
 }
 
 func hydrateFromTodos(db *sql.DB) error {
-	rows, err := db.Query(`SELECT id, title, completed, created_at FROM todos`)
+	rows, err := db.Query(`SELECT id, title, completed FROM todos WHERE deleted = false`)
 	if err != nil {
 		return err
 	}
@@ -131,7 +134,7 @@ func hydrateFromTodos(db *sql.DB) error {
 
 	for rows.Next() {
 		var t Todo
-		if err := rows.Scan(&t.ID, &t.Title, &t.Completed, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Title, &t.Completed); err != nil {
 			return err
 		}
 		todosCache[t.ID] = t
@@ -163,7 +166,7 @@ func handleEvent(db *sql.DB, body []byte) {
 		}
 
 		_, err := db.Exec(`
-			INSERT INTO todos (id, title, completed, created_at, last_event_created_at)
+			INSERT INTO todos (id, title, completed, created_at, last_modified)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (id) DO NOTHING
 		`, e.ID, e.Title, false, msg.CreatedAt, msg.CreatedAt)
@@ -173,7 +176,7 @@ func handleEvent(db *sql.DB, body []byte) {
 		}
 
 		cacheLock.Lock()
-		todosCache[e.ID] = Todo{ID: e.ID, Title: e.Title, Completed: false, CreatedAt: msg.CreatedAt}
+		todosCache[e.ID] = Todo{ID: e.ID, Title: e.Title, Completed: false}
 		cacheLock.Unlock()
 
 	case "TodoCompleted":
@@ -186,7 +189,7 @@ func handleEvent(db *sql.DB, body []byte) {
 		}
 
 		_, err := db.Exec(`
-			UPDATE todos SET completed = true, last_event_created_at = $2 WHERE id = $1
+			UPDATE todos SET completed = true, last_modified = $2 WHERE id = $1
 		`, e.ID, msg.CreatedAt)
 		if err != nil {
 			log.Println("DB update error:", err)
@@ -199,18 +202,29 @@ func handleEvent(db *sql.DB, body []byte) {
 			todosCache[e.ID] = t
 		}
 		cacheLock.Unlock()
+
+	case "TodoRemoved":
+		var e struct {
+			ID uuid.UUID `json:"id"`
+		}
+		if err := json.Unmarshal(msg.Payload, &e); err != nil {
+			log.Println("Bad payload:", err)
+			return
+		}
+
+		_, err := db.Exec(`
+			UPDATE todos SET deleted = true, last_modified = $2 WHERE id = $1
+		`, e.ID, msg.CreatedAt)
+		if err != nil {
+			log.Println("DB update error:", err)
+			return
+		}
+
+		cacheLock.Lock()
+		if _, ok := todosCache[e.ID]; ok {
+			todosCache = map[uuid.UUID]Todo{}
+			delete(todosCache, e.ID) // Remove from cache
+		}
+		cacheLock.Unlock()
 	}
-}
-
-func getTodosHandler(w http.ResponseWriter, r *http.Request) {
-	cacheLock.RLock()
-	defer cacheLock.RUnlock()
-
-	var list []Todo
-	for _, t := range todosCache {
-		list = append(list, t)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
 }
