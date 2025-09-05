@@ -21,7 +21,8 @@ export default function TodoItem({ todo, onToggle, onDelete }: Props) {
         <input
           type="checkbox"
           checked={!!todo.completed}
-          disabled={isPending}
+          // Disable the checkbox if the todo is already completed.
+          disabled={!!todo.completed || isPending}
           onChange={e => onToggle(todo.id, e.target.checked)}
           className="w-4 h-4"
         />
@@ -45,4 +46,3 @@ export default function TodoItem({ todo, onToggle, onDelete }: Props) {
     </div>
   )
 }
-

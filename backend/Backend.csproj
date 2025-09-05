@@ -5,9 +5,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.32.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.71.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.72.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="RabbitMQ.Client" Version="6.4.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="9.0.0" />
-  <!-- Backend intentionally does not reference Postgres drivers; it only talks to RabbitMQ -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="protos\projection.proto" GrpcServices="Client" />
   </ItemGroup>
 
 </Project>

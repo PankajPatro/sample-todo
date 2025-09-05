@@ -99,8 +99,7 @@ func main() {
 
 			// determine aggregate id based on event type
 			var aggId uuid.UUID
-			// default payload string
-			payload := string(ev.Payload)
+
 			if ev.Type == "TodoCreated" {
 				aggId = uuid.New()
 			} else {
@@ -123,12 +122,11 @@ func main() {
 				aggId = parsed
 			}
 
-			ev.Aggregate = aggId
-			ev.CreatedAt = time.Now().UTC()
-			ev.Payload = json.RawMessage(payload)
+			log.Printf("Processing event %s of type %s for aggregate %s with payload %s", ev.EventId, ev.Type, aggId, ev.Payload)
+
 			// store event (include event_id for idempotency) and capture DB sequence id
 			var seq int64
-			err = db.QueryRow(`INSERT INTO events(aggregate_id,event_id,type,payload,created_at) VALUES($1,$2,$3,$4,$5) RETURNING id`, aggId, nullableString(ev.EventId), ev.Type, payload, time.Now().UTC()).Scan(&seq)
+			err = db.QueryRow(`INSERT INTO events(aggregate_id,event_id,type,payload,created_at) VALUES($1,$2,$3,$4,$5) RETURNING id`, aggId, nullableString(ev.EventId), ev.Type, ev.Payload, time.Now().UTC()).Scan(&seq)
 			if err != nil {
 				log.Printf("db insert event err: %v", err)
 				d.Nack(false, true)

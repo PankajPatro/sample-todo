@@ -1,89 +1,151 @@
-# Todo Event‑Sourced Example
+# 📝 Distributed Todo App — Architectural Showcase
 
-This repository contains a minimal, **event‑sourced** micro‑service architecture that illustrates how a typical enterprise application can be decomposed into independent, loosely‑coupled layers.
+![Demo](./Screencast%20From%202025-09-05%2022-11-04.gif)
 
-## Services
+---
 
-| Service | Responsibility | Key Technology |
-|---------|-----------------|----------------|
-| **React frontend** | UI that submits events | React |
-| **ASP.NET backend** | Handles UI requests, publishes events to RabbitMQ | C#, ASP.NET |
-| **Go consumer (Persistence)** | Consumes events from RabbitMQ, persists to Postgres | Go, RabbitMQ, Postgres |
-| **Cache service (Projection Cache)** | Maintains an in‑memory cache of projections, listens for updates from RabbitMQ | Go, RabbitMQ, Postgres |
-| **RabbitMQ** | Message broker that decouples services |
-| **Postgres** | Durable event store and projection persistence |
-| **nginx** | Reverse proxy that exposes UI and API to the outside world |
+## 📖 About
 
-> **Why this matters**
-> The application demonstrates the principle of *separation of concerns*:
-> - Each component only knows about its own responsibilities.
-> - Changes to one layer (e.g., replacing the cache implementation) can be made without affecting the others.
-> - The architecture is **fully async**; there are no synchronous calls between services.
+This project is a **simple Todo application**, but with a twist: it is intentionally designed to **showcase enterprise-grade system design thinking**.  
 
-## How it Works
+Most developers, when imagining an application, picture:
+- A **Frontend** (UI) talking directly to a **Backend (API)**, which stores data in a **Database**.
 
-1. **UI → C# API**
- - User actions are converted into events and sent to the C# API via nginx.
+While this works for small apps, real-world enterprise systems often require more nuanced **architectural patterns**.  
 
-2. **C# API → RabbitMQ**
- - The C# API handles the UI requests, publishes events to RabbitMQ.
+This project demonstrates:
+- **Front-End For Back-End (BFF)** pattern.  
+- Use of **RabbitMQ** for event-driven messaging.  
+- A **Consumer** service for persistence to Postgres.  
+- A **Projection Cache** for query optimization and decoupling.  
+- **Docker Compose** for orchestrating services.  
 
-3. **C# API → Cache Service**
- - The C# API also acts as a proxy to the Cache Service, exposing the cached projections to the UI via HTTP/SSE.
+The goal is not to provide a production-ready Todo app, but to showcase **how a developer should think architecturally** beyond just "UI + API + DB".
 
-4. **Cache Service (Projection Cache)**
- - Listens for updates from RabbitMQ and updates its cache in real time.
- - On startup, it hydrates its cache by replaying all events stored in Postgres.
+---
 
-5. **Cache Service → RabbitMQ**
- - The Cache Service listens for updates from RabbitMQ.
+## 🏗️ High-Level Architecture
 
-6. **Cache Service → Postgres**
- - The Cache Service hydrates its cache from Postgres on startup.
+```
+        ┌───────────┐
+        │ Frontend  │
+        └─────┬─────┘
+              │
+              ▼
+        ┌───────────┐
+        │   BFF     │ (ASP.NET Core + SSE)
+        │  (Backend)│
+        └───┬───┬───┘
+            │   │
+   Queries  │   │ Commands
+            │   │
+            ▼   ▼
+   ┌───────────┐     ┌─────────────┐
+   │ Projection │ <── │ RabbitMQ MQ │
+   │   Cache    │     └──────┬──────┘
+   └─────┬─────┘            │
+         │                  │
+   Read Models              │ Events
+         │                  │
+         ▼                  ▼
+   ┌───────────┐     ┌───────────┐
+   │   Backend │     │  Consumer │
+   │  (queries)│     │ (subscribes,
+   └───────────┘     │ persists) │
+                      └─────┬─────┘
+                            ▼
+                      ┌───────────┐
+                      │ Postgres  │
+                      └───────────┘
+```
 
-7. **Persistence (Go Consumer) → RabbitMQ**
- - Consumes events from RabbitMQ, persists to Postgres.
+---
 
-8. **Persistence (Go Consumer) → Postgres**
- - Persists events to Postgres.
-## Running the Sample
+### 🔑 Explanation of Flow
+
+1. **Frontend → BFF (Backend)**  
+   - User interacts with the UI.  
+   - Reads go via SSE/API to the BFF.  
+   - Writes (commands like *add todo*, *update todo*, *remove todo*) are sent to the BFF.
+
+2. **BFF → RabbitMQ**  
+   - Instead of writing to Postgres directly, the BFF publishes messages to RabbitMQ.  
+   - This **decouples** the frontend/back-end from the persistence layer.
+
+3. **Consumer → Postgres**  
+   - The consumer service subscribes to RabbitMQ.  
+   - It applies commands and persists the authoritative data into Postgres.  
+
+4. **Projection Cache → Postgres + RabbitMQ**  
+   - Listens to events, rebuilds the read model (a query-optimized cache).  
+   - Exposes a gRPC interface for the BFF to subscribe to.  
+
+5. **BFF → Frontend (SSE)**  
+   - The BFF streams real-time updates from the projection cache to the frontend.  
+   - All browsers see a consistent view of todos.  
+
+---
+
+## 🐳 Running with Docker Compose
+
+The application is fully containerized. Services include:
+
+- **Postgres**: Database to persist todos.  
+- **RabbitMQ**: Message bus for decoupled event-driven communication.  
+- **Projection Cache**: Maintains read models for efficient querying.  
+- **Backend (BFF)**: Exposes APIs and SSE streams for the frontend.  
+- **Consumer**: Subscribes to events and writes to Postgres.  
+- **Frontend**: Simple React-based UI.  
+
+### Start the stack:
 
 ```bash
-# Build and start all services
 docker compose up --build
 ```
 
-The React app will be served at **`http://localhost:3000`**, and the API will be reachable at **`http://localhost:3000/api`**.
+Then visit the UI at: **http://localhost:3000**
 
-## `.gitignore`
+RabbitMQ management console: **http://localhost:15672** (guest/guest).
 
-The repository uses the following ignore rules to keep build artefacts, IDE settings, and third‑party dependencies out of source control:
+---
 
-```gitignore
-# Backend
-backend/bin/
-sample.sln
-backend/obj/
-backend/.vs/
-backend/.vscode/
-backend/*.user
+🎯 Why This Matters
 
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.vscode/
-frontend/package-lock.json
+This project is not about todos themselves.
+It’s about demonstrating system design thinking:
 
-# Service
-go-projection-cache/projection-cache
-```
+Designing with separation of concerns.
 
-Feel free to add more patterns as your environment grows.
+Using events, caching, and projections to scale reads.
 
-## Further Reading
+Leveraging a message bus to decouple services.
 
-- Explore the **`frontend`** directort for the UI call to the backend
-- Explore the **`backend`** directory for the ASP.NET API that handles UI requests and publishes events to RabbitMQ.
-- The **`go-projection-cache`** service shows how a separate cache can be hydrated from the event store and stay in sync via RabbitMQ.
-- The **`go-consumer`** folder contains the RabbitMQ consumer that writes events to Postgres.
+Showing frontend doesn’t directly couple with the DB, but works through well-defined APIs.
+
+It helps illustrate how a developer can move from “I built a CRUD app” → to “I can design enterprise-ready systems”.
+
+🧭 Next Steps
+
+Implement proper subscriber cleanup in the backend to avoid memory leaks.
+
+Add observability (logging, metrics, tracing).
+
+Add Unit Test/ Integration Test etc
+
+Experiment with scaling individual services (e.g., multiple consumers).
+
+## 🎯 Intent of This Project
+
+The intent is **not** to build yet another todo app.  
+The intent **is** to demonstrate:
+- **System design thinking.**
+- How different layers (UI, BFF, cache, DB, message bus) each have their **role**.  
+- Why **decoupling** is important in enterprise-grade systems.  
+- How you can extend even a small "toy project" into a **teachable example of architecture**.  
+
+---
+
+## 📌 Conclusion
+
+By studying and running this app, developers can learn how to think about **frontend, backend, cache, DB, and messaging systems** not as isolated parts, but as a **cohesive architecture** that scales and adapts.
 

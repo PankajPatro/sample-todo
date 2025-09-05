@@ -76,45 +76,43 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let es: EventSource | null = null
 
     function connect() {
-      baseDispatch({ type: 'RESET_CONNECTING' })
-      es = new EventSource('/events')
+      baseDispatch({ type: 'RESET_CONNECTING' });
+      es = new EventSource('/events');
 
-      es.onmessage = ev => {
+      es.onmessage = (ev) => {
         try {
-          const msg = JSON.parse(ev.data)
-          const type = msg.type || 'Projection'
+          const msg = JSON.parse(ev.data);
 
-          if (type === 'Snapshot' || (msg.projection && msg.projection.id)) {
-            const proj = msg.projection
-            const eventId = msg.eventId || (msg.metadata && msg.metadata.eventId)
-
-            if (proj && proj.id) {
-              const todo: Todo = {
-                id: proj.id,
-                completed: proj.completed,
-                _eventId: eventId
-              }
-              if (proj.title) todo.title = proj.title
-              baseDispatch({ type: 'ADD_OR_UPDATE', todo })
-            } else if (proj === null) {
-              const id = msg.aggregateId || (msg.projection && msg.projection.id)
-              if (id) baseDispatch({ type: 'REMOVE', id })
+          if (Array.isArray(msg)) {
+            msg.forEach((todo) => {
+              baseDispatch({ type: 'ADD_OR_UPDATE', todo: { ...todo, _eventId: todo.id } });
+            });
+            baseDispatch({ type: 'MARK_OPEN' });
+          } else if (msg && typeof msg === 'object' && 'id' in msg) {
+            if (msg.type === 'remove') {
+              baseDispatch({ type: 'REMOVE', id: msg.id });
+            } else {
+              // Create the todo object and use the 'id' from the server as the _eventId for correlation
+              const todo = {
+                id: msg.id,
+                title: msg.title,
+                completed: msg.completed,
+                _eventId: msg.id,
+              };
+              baseDispatch({ type: 'ADD_OR_UPDATE', todo });
             }
-          } else if (type === 'TodoRemoved') {
-            const id = msg.payload?.id || msg.aggregateId
-            if (id) baseDispatch({ type: 'REMOVE', id })
-          } else if (type === 'SnapshotComplete') {
-            baseDispatch({ type: 'MARK_OPEN' })
           }
         } catch (e) {
-          console.error('sse parse', e)
+          console.error('sse parse error:', e);
+          baseDispatch({ type: 'MARK_ERROR' });
         }
-      }
+      };
 
-      es.onerror = () => {
-        baseDispatch({ type: 'MARK_ERROR' })
-        es?.close()
-      }
+      es.onerror = (e) => {
+        console.error('SSE error:', e);
+        baseDispatch({ type: 'MARK_ERROR' });
+        es?.close();
+      };
     }
 
     connect()

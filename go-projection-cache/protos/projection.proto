@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package projection;
+
+option go_package = "github.com/todossample/projection-cache/protos;projection";
+
+// The standard empty message from protobuf, useful for methods with no input.
+import "google/protobuf/empty.proto";
+
+// A Todo item, representing the state.
+message Todo {
+  string id = 1;
+  string title = 2;
+  bool completed = 3;
+}
+
+// A full snapshot of all todos.
+message Snapshot {
+  repeated Todo todos = 1;
+}
+
+// The core event message that will be streamed.
+// The `oneof` field ensures that only one of these messages can be sent at a time.
+message ProjectionEvent {
+  oneof event {
+    Snapshot snapshot = 1;
+    Todo todo_updated = 2;
+    string todo_removed_id = 3; // We only need the ID to remove a todo.
+    google.protobuf.Empty snapshot_complete = 4;
+  }
+}
+
+// The service that the client will call to subscribe to events.
+service ProjectionService {
+  rpc Subscribe(google.protobuf.Empty) returns (stream ProjectionEvent);
+}
