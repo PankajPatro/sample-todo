@@ -1,0 +1,17 @@
+# Backend
+backend/bin/
+sample.sln
+backend/obj/
+backend/.vs/
+backend/.vscode/
+backend/*.user
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vscode/
+frontend/package-lock.json
+
+# Service
+go-projection-cache/projection-cache
+
